@@ -26,15 +26,20 @@ SECRET_KEY = os.environ.get('SECRET_KEY')
 
 SLEEP_TIMEOUT = 30
 START_INTERVAL = 0
-END_INTERVAL = 24
+END_INTERVAL = 8
 
 MAX_STOP_LOSS_RISK=4
 
 candle_status_green = False
 
-BINANCE_FUTURES_BASE_URL="https://fapi.binance.com"
+# Futures environment variables
+BINANCE_FUTURES_BASE_URL = "https://fapi.binance.com"
+BINANCE_FUTURES_KLINES_ENDPOINT = "/fapi/v1/continuousKlines"
 
-
+# Spot environment variables
+BINANCE_SPOT_BASE_URL = "https://api.binance.com"
+BINANCE_SPOT_CREATE_ORDER_ENDPOINT = "/api/v3/order"
+BINANCE_SPOT_KLINES_ENDPOINT = "/api/v3/klines"
 class Intervals(Enum):
     TEN_MINUTES = "15m"
     THIRTY_MINUTES = "30m"
@@ -55,6 +60,35 @@ class Intervals(Enum):
             return Intervals[s.upper()]
         except KeyError:
             raise ValueError()
+
+class SpotSides(Enum):
+    BUY = 'buy'
+    SELL = 'sell'
+
+    def __str__(self):
+        return self.name.lower()
+
+    @staticmethod
+    def from_string(s):
+        try:
+            return SpotSides[s.upper()]
+        except KeyError:
+            raise ValueError()
+
+class Markets(Enum):
+    FUTURES = 'futures'
+    SPOT = 'spot'
+
+    def __str__(self):
+        return self.name.lower()
+
+    @staticmethod
+    def from_string(s):
+        try:
+            return Markets[s.upper()]
+        except KeyError:
+            raise ValueError()
+
 
 def check_open_trade_ready():
     now = datetime.utcnow()
@@ -91,15 +125,37 @@ def open_long_position_binance_futures(pair, take_profit, stop_loss, pair_change
     #result = request_client.post_order(symbol=pair, side=OrderSide.SELL, stopPrice=take_profit, closePosition=True, ordertype=OrderType.TAKE_PROFIT_MARKET, positionSide="BOTH", timeInForce="GTC")
     print(green.bold('\n\t\t✓ Take profit market at: {} creted.'.format(take_profit)))
 
+def open_position_binance_spot(pair, side, limit, pair_change, quantity, precision):
+    url = BINANCE_SPOT_BASE_URL + BINANCE_SPOT_CREATE_ORDER_ENDPOINT
+    
+    quantity_rounded = float(quantity) / float(pair_change)
+    quantity_with_precision = "{:0.0{}f}".format(quantity_rounded, precision)
+    
+    parameters = {}
+    if (side == SpotSides.BUY):
+        parameters = { "symbol": pair, "side": SpotSides.BUY, "type": "LIMIT", "quantity": quantity_with_precision }
+    else:
+        parameters = { "symbol": pair, "side": SpotSides.SELL, "type": "STOP_LOSS", "quantity": quantity_with_precision, "stopPrice": quantity_with_precision }
+    
+    response = requests.post(url, data = parameters)
+
+    print(white.bold('\n\tOpening spot position type {} for {} pair limit/stop order at ({}) with quantity: {}.'.format(side, pair, limit)))
+    print(green.bold('\n\t\t✓ Limit order created at price: {}.'.format(limit)))
+
 
 def fib_retracement(min, max):
     diff = max - min
     return { "tp1": min + 0.236 * diff, "tp2": min + 0.382 * diff, "tp3": min + 0.5 * diff, "tp4": min + 0.618 * diff}
 
 
-def get_last_binance_candles(pair, interval):
-    url = requests.get('{}/fapi/v1/continuousKlines?pair={}&interval={}&limit=2&contractType=PERPETUAL'.format(BINANCE_FUTURES_BASE_URL, pair, interval))
-    data = url.json()
+def get_last_binance_candles(pair, interval, market):
+
+    response = None
+    if (market == Markets.SPOT):
+        response = requests.get('{}{}?symbol={}&interval={}&limit=2'.format(BINANCE_SPOT_BASE_URL, BINANCE_SPOT_KLINES_ENDPOINT, pair, interval))
+    else:
+        response = requests.get('{}{}?pair={}&interval={}&limit=2&contractType=PERPETUAL'.format(BINANCE_FUTURES_BASE_URL, BINANCE_FUTURES_KLINES_ENDPOINT, pair, interval))
+    data = response.json()
     return data
 
 def check_safe_stop_loss(low, open):
@@ -112,7 +168,7 @@ def check_safe_stop_loss(low, open):
         exit(1)
     return is_safe
 
-def trade_the_open(pair, interval, quantity, leverage, precision):
+def trade_the_open(pair, interval, quantity, leverage, precision, market, limit):
     candles = get_last_binance_candles(pair, interval)
     """ Binance API response format
     [
@@ -154,7 +210,10 @@ def trade_the_open(pair, interval, quantity, leverage, precision):
             targets = fib_retracement(lc_open, lc_high)
         print(white.bold('\n\tTargets based on fib retracement: {}'.format(targets)))
         if (check_safe_stop_loss(cc_low, cc_open)):
-            open_long_position_binance_futures(pair, targets["tp2"], cc_low, cc_close, quantity, leverage, precision)
+            if (market == Markets.FUTURES):
+                open_long_position_binance_futures(pair, targets["tp2"], cc_low, cc_close, quantity, leverage, precision)
+            else:
+                open_position_binance_spot(pair, side=SpotSides.BUY, limit, pair_change, quantity, precision
             return True
     else:
         print(yellow.bold('\t Candle is still RED after the open. Checking again in {} seconds'.format(SLEEP_TIMEOUT)))    
@@ -163,11 +222,11 @@ def trade_the_open(pair, interval, quantity, leverage, precision):
 
 
 
-def main(pair, quantity, interval=Intervals.DAY, leverage=2, precision=0):
+def main(pair, quantity, interval=Intervals.DAY, leverage=2, precision=0, market=Markets.FUTURES, limit=0):
     order_filled = False
     while not order_filled:
         if (check_open_trade_ready()):
-            order_filled = trade_the_open(pair, interval, quantity, leverage, precision)
+            order_filled = trade_the_open(pair, interval, quantity, leverage, precision, market, limit)
         if (not order_filled):
             time.sleep(SLEEP_TIMEOUT)
 
@@ -178,11 +237,13 @@ if __name__ == "__main__":
     parser.add_argument('--interval', type=Intervals.from_string, choices=list(Intervals), help='Candle timeframe to trade.')
     parser.add_argument('--leverage', type=int, help='Leverage to apply on the trade.')
     parser.add_argument('--precision', type=int, help='Number of decimals (precision) for the selected pair.')
+    parser.add_argument('--market', type=Markets.from_string, help='Market where the will be executed.')
+    parser.add_argument('--limit', type=float, help='Limit for spot orders.')
 
 
     args = parser.parse_args()
     args.pair = args.pair + 'USDT'
-    print(white.bold('* Liquidity trading of: {} with {} as amount at {} candle with x{} leverage and precision of {}.'.format(args.pair, args.quantity, args.interval.value, args.leverage, args.precision)))
-    main(args.pair, args.quantity, args.interval.value, args.leverage, args.precision)
+    print(white.bold('* Liquidity trading of: {} with {} as amount at {} candle with x{} leverage and precision of {} at {} market.'.format(args.pair, args.quantity, args.interval.value, args.leverage, args.precision, args.market)))
+    main(args.pair, args.quantity, args.interval.value, args.leverage, args.precision, args.market, args.limit)
     
     print(green.bold('\nOrders successfully set.'))
