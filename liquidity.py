@@ -28,7 +28,7 @@ SLEEP_TIMEOUT = 30
 START_INTERVAL = 0
 END_INTERVAL = 8
 
-MAX_STOP_LOSS_RISK=4
+MAX_STOP_LOSS_RISK=6
 
 candle_status_green = False
 
@@ -102,11 +102,15 @@ def check_open_trade_ready():
 def open_long_position_binance_futures(pair, take_profit, stop_loss, pair_change, quantity, leverage, precision):
     request_client = RequestClient(api_key=API_KEY, secret_key=SECRET_KEY)
     # Change leverage
-    #request_client.change_initial_leverage(pair, leverage)
-    #try:
-        #margin_type = request_client.change_margin_type(symbol=pair, marginType=FuturesMarginType.ISOLATED)
-    #except:
-        #print('error')
+    try:
+        request_client.change_initial_leverage(pair, leverage)
+    except:
+        print(red.bold('error changing leverage'))
+
+    try:
+        margin_type = request_client.change_margin_type(symbol=pair, marginType=FuturesMarginType.ISOLATED)
+    except:
+        print(red.bold('error changing margin type'))
     # Create order
     quantity_rounded = float(quantity * leverage) / float(pair_change)
     quantity_with_precision = "{:0.0{}f}".format(quantity_rounded, precision)
@@ -115,14 +119,14 @@ def open_long_position_binance_futures(pair, take_profit, stop_loss, pair_change
     take_profit = "{:0.0{}f}".format(take_profit, precision)
 
     print(white.bold('\n\tOpening future position LONG at market ({}) with quantity: {} {} with take profit on: {} and stop loss: {}'.format(pair_change, quantity_with_precision, pair, take_profit, stop_loss)))
-    #result = request_client.post_order(symbol=pair, side=OrderSide.BUY, quantity=quantity_with_precision, ordertype=OrderType.MARKET, positionSide="BOTH")
+    result = request_client.post_order(symbol=pair, side=OrderSide.BUY, quantity=quantity_with_precision, ordertype=OrderType.MARKET, positionSide="BOTH")
     print(green.bold('\n\t\t✓ Market order created.'))
 
     # Set take profit and stop loss orders
 
-    #result = request_client.post_order(symbol=pair, side=OrderSide.SELL, stopPrice=stop_loss, closePosition=True, ordertype=OrderType.STOP_MARKET, positionSide="BOTH", timeInForce="GTC")
+    result = request_client.post_order(symbol=pair, side=OrderSide.SELL, stopPrice=stop_loss, closePosition=True, ordertype=OrderType.STOP_MARKET, positionSide="BOTH", timeInForce="GTC")
     print(green.bold('\n\t\t✓ Stop market order at: {} created.'.format(stop_loss)))
-    #result = request_client.post_order(symbol=pair, side=OrderSide.SELL, stopPrice=take_profit, closePosition=True, ordertype=OrderType.TAKE_PROFIT_MARKET, positionSide="BOTH", timeInForce="GTC")
+    result = request_client.post_order(symbol=pair, side=OrderSide.SELL, stopPrice=take_profit, closePosition=True, ordertype=OrderType.TAKE_PROFIT_MARKET, positionSide="BOTH", timeInForce="GTC")
     print(green.bold('\n\t\t✓ Take profit market at: {} creted.'.format(take_profit)))
 
 def open_position_binance_spot(pair, side, limit, pair_change, quantity, precision):
@@ -199,7 +203,8 @@ def trade_the_open(pair, interval, quantity, leverage, precision, market, limit)
     cc_low = float(current_candle[3])
     cc_close = float(current_candle[4])
     # Check if candlestick turned green
-    if (cc_open < cc_close and cc_open > cc_low):
+
+    if (cc_open < cc_close and cc_open >= cc_low):
         print(green.bold('\n\tCandle turned green.'))
         # Check if previous candle is green or red to apply fib retracement
         if (lc_open < lc_close):
@@ -210,14 +215,23 @@ def trade_the_open(pair, interval, quantity, leverage, precision, market, limit)
             targets = fib_retracement(lc_open, lc_high)
         print(white.bold('\n\tTargets based on fib retracement: {}'.format(targets)))
         if (check_safe_stop_loss(cc_low, cc_open)):
+<<<<<<< HEAD
             if (market == Markets.FUTURES):
                 open_long_position_binance_futures(pair, targets["tp2"], cc_low, cc_close, quantity, leverage, precision)
             else:
                 open_position_binance_spot(pair, side=SpotSides.BUY, limit, pair_change, quantity, precision
+=======
+            open_long_position_binance_futures(pair, targets["tp3"], cc_low, cc_close, quantity, leverage, precision)
+>>>>>>> master
             return True
-    else:
+    """else:
         print(yellow.bold('\t Candle is still RED after the open. Checking again in {} seconds'.format(SLEEP_TIMEOUT)))    
-        return False
+        if (lc_open < lc_close):
+            targets = fib_retracement(lc_close, lc_high)
+            if cc_high < targets["tp1"] and cc_close < cc_open and cc_open < cc_high and check_safe_stop_loss(cc_open, cc_high):
+                print('This could be SHORTED')
+                #open_short_position_binance_futures(pair, targets["tp2"], cc_low, cc_close, quantity, leverage, precision)
+        return False"""
 
 
 
