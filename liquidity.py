@@ -198,6 +198,11 @@ def check_safe_stop_loss(low, open):
         exit(1)
     return is_safe
 
+def minimum_downside(cc_open, cc_low):
+    diff = cc_open - cc_low
+    downside = (diff / cc_low) * 100
+    return downside > 1
+
 def trade_the_open(pair, interval, quantity, leverage, precision, market, limit):
     candles = get_last_binance_candles(pair, interval, market)
     """ Binance API response format
@@ -258,13 +263,6 @@ def trade_the_open(pair, interval, quantity, leverage, precision, market, limit)
                 print('This could be SHORTED')
                 open_short_position_binance_futures(pair, targets["tp2"], cc_low, cc_close, quantity, leverage, precision)"""
         return False
-
-def minimum_downside(cc_open, cc_low):
-    diff = cc_open - cc_low
-    downside = (diff / cc_low) * 100
-    return downside > 1
-
-
 
 def main(pair, quantity, interval=Intervals.DAY, leverage=2, precision=0, market=Markets.FUTURES, limit=0):
     order_filled = False
