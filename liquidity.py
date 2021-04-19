@@ -241,6 +241,9 @@ def trade_the_open(pair, interval, quantity, leverage, precision, market, limit)
             # Previous candle is red
             targets = fib_retracement(lc_open, lc_high)
         print(white.bold('\n\tTargets based on fib retracement: {}'.format(targets)))
+        if (not minimum_downside(cc_open, cc_low)):
+            return False
+
         if (check_safe_stop_loss(cc_low, cc_open)):
             if (market == Markets.FUTURES):
                 open_long_position_binance_futures(pair, targets["tp1"], cc_low, cc_close, quantity, leverage, precision)
@@ -256,6 +259,10 @@ def trade_the_open(pair, interval, quantity, leverage, precision, market, limit)
                 open_short_position_binance_futures(pair, targets["tp2"], cc_low, cc_close, quantity, leverage, precision)"""
         return False
 
+def minimum_downside(cc_open, cc_low):
+    diff = cc_open - cc_low
+    downside = (diff / cc_low) * 100
+    return downside > 1
 
 
 
