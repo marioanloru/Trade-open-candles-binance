@@ -23,6 +23,8 @@ load_dotenv()
 API_KEY = os.environ.get('API_KEY')
 SECRET_KEY = os.environ.get('SECRET_KEY')
 
+MAX_ORDER_RETRIES = 2
+
 SLEEP_TIMEOUT = 30
 START_INTERVAL = 0
 END_INTERVAL = 8
@@ -41,7 +43,9 @@ BINANCE_SPOT_CREATE_ORDER_ENDPOINT = "/api/v3/order/test"
 BINANCE_SPOT_KLINES_ENDPOINT = "/api/v3/klines"
 BINANCE_SPOT_EXCHANGE_INFO_ENDPOINT = "/api/v3/exchangeInfo"
 
-
+TIMES_GREEN = 0
+LAST_CANDLE_RED = True
+LAST_LOW_PRICE = 999999
 
 class Intervals(Enum):
     FIVETEEN_MINUTES = "15m"
@@ -201,9 +205,12 @@ def check_safe_stop_loss(low, open):
 def minimum_downside(cc_open, cc_low):
     diff = cc_open - cc_low
     downside = (diff / cc_low) * 100
-    return downside > 1
+    return downside > 0.5
 
 def trade_the_open(pair, interval, quantity, leverage, precision, market, limit):
+    global LAST_CANDLE_RED
+    global LAST_LOW_PRICE
+    global TIMES_GREEN
     candles = get_last_binance_candles(pair, interval, market)
     """ Binance API response format
     [
@@ -237,6 +244,14 @@ def trade_the_open(pair, interval, quantity, leverage, precision, market, limit)
     # Check if candlestick turned green
 
     if (cc_open < cc_close and cc_open > cc_low):
+        if (LAST_CANDLE_RED and cc_low < LAST_LOW_PRICE):
+            print('***** INTENTO NUMERO: {} ******'.format(TIMES_GREEN))
+            TIMES_GREEN += 1
+            LAST_CANDLE_RED = False
+            LAST_LOW_PRICE = cc_low
+        else:
+            print(' x - Todavia esta verde como para volver a intentarlo')
+            return False
         print(green.bold('\n\tCandle turned green.'))
         # Check if previous candle is green or red to apply fib retracement
         if (lc_open < lc_close):
@@ -246,8 +261,8 @@ def trade_the_open(pair, interval, quantity, leverage, precision, market, limit)
             # Previous candle is red
             targets = fib_retracement(lc_open, lc_high)
         print(white.bold('\n\tTargets based on fib retracement: {}'.format(targets)))
-        if (not minimum_downside(cc_open, cc_low)):
-            return False
+        #if (not minimum_downside(cc_open, cc_low)):
+            #return False
 
         if (check_safe_stop_loss(cc_low, cc_open)):
             if (market == Markets.FUTURES):
@@ -256,6 +271,8 @@ def trade_the_open(pair, interval, quantity, leverage, precision, market, limit)
                 open_position_binance_spot(pair, cc_close, cc_close, quantity, precision, SpotSides.BUY)
             return True
     else:
+        if not LAST_CANDLE_RED:
+            LAST_CANDLE_RED = True
         print(yellow.bold('\t Candle is still RED after the open. Checking again in {} seconds'.format(SLEEP_TIMEOUT)))    
         """if (lc_open < lc_close):
             targets = fib_retracement(lc_close, lc_high)
@@ -268,7 +285,7 @@ def main(pair, quantity, interval=Intervals.DAY, leverage=2, precision=0, market
     order_filled = False
     
     print(white.bold('* Liquidity trading of: {} with {} as amount at {} candle with x{} leverage and precision of {} at {} market starting at {} and finishing at {}.'.format(pair, quantity, interval, leverage, precision, market, START_INTERVAL, END_INTERVAL)))
-    while not order_filled:
+    while not order_filled and TIMES_GREEN < MAX_ORDER_RETRIES:
         if (check_open_trade_ready()):
             order_filled = trade_the_open(pair, interval, quantity, leverage, precision, market, limit)
         if (not order_filled):
