@@ -36,6 +36,7 @@ INITIAL_DELAY = False
 # Futures environment variables
 BINANCE_FUTURES_BASE_URL = "https://fapi.binance.com"
 BINANCE_FUTURES_KLINES_ENDPOINT = "/fapi/v1/continuousKlines"
+BINANCE_FUTURES_EXCHANGE_INFO_ENDPOINT = "/fapi/v1/exchangeInfo"
 
 # Spot environment variables
 BINANCE_SPOT_BASE_URL = "https://api.binance.com"
@@ -116,6 +117,39 @@ class Markets(Enum):
         except KeyError:
             raise ValueError()"""
 
+def check_best_trade(interval=Intervals.DAY):
+    request_client = RequestClient(api_key=API_KEY, secret_key=SECRET_KEY)
+
+    # Request info of all symbols to retrieve precision
+    response = requests.get(BINANCE_FUTURES_BASE_URL + BINANCE_FUTURES_EXCHANGE_INFO_ENDPOINT)
+
+    exchange_info = response.json()
+
+    price_precision = 0
+    best_wicks = [] 
+    print('Number of pairs to check approx: ', len(exchange_info['symbols']))
+    for item in exchange_info['symbols']:
+        if (not item['contractType'] == 'PERPETUAL'):
+            continue
+        candles = get_last_binance_candles(item['symbol'], interval, Markets.FUTURES)
+        current_candle = candles[1]
+
+        cc_open = float(current_candle[1])
+        cc_high = float(current_candle[2])
+        cc_low = float(current_candle[3])
+        cc_close = float(current_candle[4])
+
+        # Candle is green
+        if (cc_open < cc_close):
+            diff = cc_high - cc_close
+            cc_wick = round((diff / cc_close) * 100, 2)
+            best_wicks.append({ 'wick': cc_wick, 'symbol': item['symbol'] })
+        #else: # Candle is red
+
+    result = sorted(best_wicks, key=lambda k: k['wick'], reverse=True)
+    print(white.bold('Best wicks to trade found are:'))
+    for item in result[0:10]:
+        print(green.bold('\t{} -> {} % wick.'.format(item['symbol'], item['wick'])))
 
 def check_open_trade_ready():
     global INITIAL_DELAY
@@ -216,11 +250,10 @@ def open_position_binance_spot(pair, limit, pair_change, quantity, side = SpotSi
 
 def fib_retracement(min, max):
     diff = max - min
-    return { "tp1": min + 0.236 * diff, "tp2": min + 0.382 * diff, "tp3": min + 0.5 * diff, "tp4": min + 0.618 * diff}
+    return { 1: min + 0.236 * diff, 2: min + 0.382 * diff, 3: min + 0.5 * diff, 4: min + 0.618 * diff}
 
 
 def get_last_binance_candles(pair, interval, market=Markets.FUTURES):
-
     response = None
     if (market == Markets.SPOT):
         url = '{}{}?symbol={}&interval={}&limit=2'.format(BINANCE_SPOT_BASE_URL, BINANCE_SPOT_KLINES_ENDPOINT, pair, interval)
@@ -245,7 +278,7 @@ def minimum_downside(cc_open, cc_low):
     downside = (diff / cc_low) * 100
     return downside > 0.5
 
-def trade_the_open(pair, interval, quantity, leverage, market, limit):
+def trade_the_open(pair, interval, quantity, leverage, market, limit, target):
     global LAST_CANDLE_RED
     global LAST_LOW_PRICE
     global TIMES_GREEN
@@ -323,7 +356,7 @@ def trade_the_open(pair, interval, quantity, leverage, market, limit):
 
         if (check_safe_stop_loss(cc_low, cc_open)):
             if (market == Markets.FUTURES):
-                open_long_position_binance_futures(pair, targets["tp3"], cc_low, cc_close, quantity, leverage)
+                open_long_position_binance_futures(pair, targets[target], cc_low, cc_close, quantity, leverage)
             else:
                 open_position_binance_spot(pair, cc_close, cc_close, quantity, SpotSides.BUY)
             return True
@@ -338,13 +371,13 @@ def trade_the_open(pair, interval, quantity, leverage, market, limit):
                 open_short_position_binance_futures(pair, targets["tp2"], cc_low, cc_close, quantity, leverage, precision)"""
         return False
 
-def main(pair, quantity, interval=Intervals.DAY, leverage=2, market=Markets.FUTURES, limit=0):
+def main(pair, quantity, interval=Intervals.DAY, leverage=2, market=Markets.FUTURES, limit=0, target=1):
     order_filled = False
     
     print(white.bold('* Liquidity trading of: {} with {} as amount at {} candle with x{} leverage and at {} market starting at {} and finishing at {}.'.format(pair, quantity, interval, leverage, market, START_INTERVAL, END_INTERVAL)))
     while not TARGET_REACHED and (not order_filled or TIMES_GREEN < MAX_ORDER_RETRIES):
         if (check_open_trade_ready()):
-            order_filled = trade_the_open(pair, interval, quantity, leverage, market, limit)
+            order_filled = trade_the_open(pair, interval, quantity, leverage, market, limit, target)
         if (not order_filled):
             time.sleep(SLEEP_TIMEOUT)
 
@@ -359,9 +392,15 @@ if __name__ == "__main__":
     parser.add_argument('--start', type=int, help='Candle UTC start.', default=0)
     parser.add_argument('--end', type=int, help='Candle UTC end.', default=8)
     parser.add_argument('--risk', type=int, help='Risk to take with the trade.', default=4)
-
+    parser.add_argument('--target', type=int, help='Fibonnacci target to reach.', default=4)
+    parser.add_argument('--check', action='store_true', help='Check best pair to trade.')
 
     args = parser.parse_args()
+
+    if (args.check):
+        check_best_trade(args.interval.value)
+        sys.exit()
+
     if (args.market == Markets.FUTURES):
         args.pair = args.pair + 'USDT'
 
@@ -369,6 +408,6 @@ if __name__ == "__main__":
     END_INTERVAL = args.end
 
     MAX_STOP_LOSS_RISK = args.risk
-    main(args.pair, args.quantity, args.interval.value, args.leverage, args.market, args.limit)
+    main(args.pair, args.quantity, args.interval.value, args.leverage, args.market, args.limit, args.target)
 
     print(green.bold('\nOrders successfully set.'))
