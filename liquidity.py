@@ -291,10 +291,10 @@ def trade_the_open(pair, interval, quantity, leverage, market, limit):
     cc_close = float(current_candle[4])
     # Check if candlestick turned green
 
-    if (cc_high >= TARGET):
+    if (cc_high >= float(TARGET)):
         TARGET_REACHED = True
 
-    if (cc_low <= STOP_LOSS):
+    if (cc_low <= float(STOP_LOSS)):
         STOP_LOSS_REACHED = True
 
     if (TIMES_GREEN > 1 and not STOP_LOSS_REACHED):
