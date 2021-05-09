@@ -25,7 +25,7 @@ SECRET_KEY = os.environ.get('SECRET_KEY')
 
 MAX_ORDER_RETRIES = 3
 
-SLEEP_TIMEOUT = 30
+SLEEP_TIMEOUT = 15
 START_INTERVAL = 0
 END_INTERVAL = 8
 
@@ -54,6 +54,9 @@ STOP_LOSS = 0
 TARGET_REACHED = False
 TARGET = 99999
 
+STOP_LOSS_ORDER_ID = None
+TAKE_PROFIT_ORDER_ID = None
+
 class Intervals(Enum):
     FIVETEEN_MINUTES = "15m"
     THIRTY_MINUTES = "30m"
@@ -63,6 +66,7 @@ class Intervals(Enum):
     DAY = "1d"
     THREE_DAYS = "3d"
     WEEK = "1w"
+    TWO_WEEKS = "2w"
     MONTH = "1M"
 
     def __str__(self):
@@ -131,6 +135,7 @@ def check_best_trade(interval=Intervals.DAY):
     for item in exchange_info['symbols']:
         if (not item['contractType'] == 'PERPETUAL'):
             continue
+        print('\t * Checking: {}'.format(item['symbol']))
         candles = get_last_binance_candles(item['symbol'], interval, Markets.FUTURES)
         current_candle = candles[1]
 
@@ -169,8 +174,25 @@ def open_long_position_binance_futures(pair, take_profit, stop_loss, pair_change
     global STOP_LOSS
     global TARGET
     global STOP_LOSS_REACHED
+    global STOP_LOSS_ORDER_ID
+    global TAKE_PROFIT_ORDER_ID
 
     request_client = RequestClient(api_key=API_KEY, secret_key=SECRET_KEY)
+    # Cancel previous take profit and stop loss orders
+    try:
+        if (TAKE_PROFIT_ORDER_ID):
+            request_client.cancel_order(symbol=pair, orderId=TAKE_PROFIT_ORDER_ID)
+    except:
+        print(red.bold('Take profit order id {} could not be cancelled'.format(TAKE_PROFIT_ORDER_ID)))
+
+    try:
+        if (STOP_LOSS_ORDER_ID):
+            request_client.cancel_order(symbol=pair, orderId=STOP_LOSS_ORDER_ID)
+    except:
+        print(red.bold('Stop loss profit order id {} could not be cancelled'.format(STOP_LOSS_ORDER_ID)))
+
+    STOP_LOSS_ORDER_ID = None
+    TAKE_PROFIT_ORDER_ID = None
     # Change leverage
     try:
         request_client.change_initial_leverage(pair, leverage)
@@ -212,8 +234,10 @@ def open_long_position_binance_futures(pair, take_profit, stop_loss, pair_change
     # Set take profit and stop loss orders
     try:
         result = request_client.post_order(symbol=pair, side=OrderSide.SELL, stopPrice=stop_loss, closePosition=True, ordertype=OrderType.STOP_MARKET, positionSide="BOTH", timeInForce="GTC")
+        STOP_LOSS_ORDER_ID = result.orderId
         print(green.bold('\n\t\t✓ Stop market order at: {} created.'.format(stop_loss)))
         result = request_client.post_order(symbol=pair, side=OrderSide.SELL, stopPrice=take_profit, closePosition=True, ordertype=OrderType.TAKE_PROFIT_MARKET, positionSide="BOTH", timeInForce="GTC")
+        TAKE_PROFIT_ORDER_ID = result.orderId
         print(green.bold('\n\t\t✓ Take profit market at: {} creted.'.format(take_profit)))
     except:
         # Cancel order if something did not work as expected
@@ -255,13 +279,53 @@ def fib_retracement(min, max):
 
 def get_last_binance_candles(pair, interval, market=Markets.FUTURES):
     response = None
+    limit = 2
+    if (interval == Intervals.TWO_WEEKS.value):
+        two_week_reference = datetime.utcfromtimestamp(1618185600)
+        now = datetime.utcfromtimestamp(1619433046)
+        now = datetime.utcnow()
+        diff = now - two_week_reference
+        diff_in_minutes = (diff.total_seconds() % (14 * 24 * 60 * 60)) / 60
+        diff_in_hours = diff_in_minutes / 60
+
+        next_two_week_candle = (14 * 24) - diff_in_hours
+        interval = Intervals.WEEK.value
+        limit = 3
+        if (next_two_week_candle < 24):
+            limit = 4
+
     if (market == Markets.SPOT):
-        url = '{}{}?symbol={}&interval={}&limit=2'.format(BINANCE_SPOT_BASE_URL, BINANCE_SPOT_KLINES_ENDPOINT, pair, interval)
+        url = '{}{}?symbol={}&interval={}&limit={}'.format(BINANCE_SPOT_BASE_URL, BINANCE_SPOT_KLINES_ENDPOINT, pair, interval, limit)
         response = requests.get(url)
     else:
-        response = requests.get('{}{}?pair={}&interval={}&limit=2&contractType=PERPETUAL'.format(BINANCE_FUTURES_BASE_URL, BINANCE_FUTURES_KLINES_ENDPOINT, pair, interval))
+        response = requests.get('{}{}?pair={}&interval={}&limit={}&contractType=PERPETUAL'.format(BINANCE_FUTURES_BASE_URL, BINANCE_FUTURES_KLINES_ENDPOINT, pair, interval, limit))
     data = response.json()
-    return data
+
+    result = data
+    # Parse intervals non accepted by binance API (2w)
+    if (len(result) > 2):
+        first_week = result[0]
+        second_week = result[1]
+        third_week = result[2]
+        lc_low = min(float(first_week[3]), float(second_week[3]))
+        lc_open = float(first_week[1])
+        lc_close = float(second_week[4])
+        lc_high = max(float(first_week[2]), float(second_week[2]))
+
+        cc_low = float(third_week[3])
+        cc_open = float(third_week[1])
+        cc_close = float(third_week[4])
+        cc_high = float(third_week[2])
+
+        if (next_two_week_candle < 24):
+            fourth_week = result[3]
+            cc_low = min(float(third_week[3]), float(fourth_week[3]))
+            cc_open = float(third_week[1])
+            cc_close = float(fourth_week[4])
+            cc_high = max(float(third_week[2]), float(fourth_week[2]))
+        result = [[first_week[0], lc_open, lc_high, lc_low, lc_close], [third_week[0], cc_open, cc_high, cc_low, cc_close]]  
+
+    return result
 
 def check_safe_stop_loss(low, open):
     diff = open - low
