@@ -137,8 +137,9 @@ def check_best_trade(interval=Intervals.DAY):
             continue
         print('\t * Checking: {}'.format(item['symbol']))
         candles = get_last_binance_candles(item['symbol'], interval, Markets.FUTURES)
+        if (not len(candles) > 1):
+            continue
         current_candle = candles[1]
-
         cc_open = float(current_candle[1])
         cc_high = float(current_candle[2])
         cc_low = float(current_candle[3])
@@ -280,7 +281,7 @@ def fib_retracement(min, max):
 def get_last_binance_candles(pair, interval, market=Markets.FUTURES):
     response = None
     limit = 2
-    if (interval == Intervals.TWO_WEEKS.value):
+    """if (interval == Intervals.TWO_WEEKS.value):
         two_week_reference = datetime.utcfromtimestamp(1618185600)
         now = datetime.utcfromtimestamp(1619433046)
         now = datetime.utcnow()
@@ -292,7 +293,7 @@ def get_last_binance_candles(pair, interval, market=Markets.FUTURES):
         interval = Intervals.WEEK.value
         limit = 3
         if (next_two_week_candle < 24):
-            limit = 4
+            limit = 4"""
 
     if (market == Markets.SPOT):
         url = '{}{}?symbol={}&interval={}&limit={}'.format(BINANCE_SPOT_BASE_URL, BINANCE_SPOT_KLINES_ENDPOINT, pair, interval, limit)
