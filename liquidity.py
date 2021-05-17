@@ -45,8 +45,13 @@ BINANCE_SPOT_KLINES_ENDPOINT = "/api/v3/klines"
 BINANCE_SPOT_EXCHANGE_INFO_ENDPOINT = "/api/v3/exchangeInfo"
 
 TIMES_GREEN = 0
+TIMES_RED = 0
+
 LAST_CANDLE_RED = True
+LAST_CANDLE_GREEN = True
+
 LAST_LOW_PRICE = 999999
+LAST_HIGH_PRICE = 0
 
 STOP_LOSS_REACHED = False
 STOP_LOSS = 0
@@ -58,8 +63,8 @@ STOP_LOSS_ORDER_ID = None
 TAKE_PROFIT_ORDER_ID = None
 
 class Intervals(Enum):
-    FIVETEEN_MINUTES = "15m"
-    THIRTY_MINUTES = "30m"
+    #FIVETEEN_MINUTES = "15m"
+    #THIRTY_MINUTES = "30m"
     HOUR = "1h"
     FOUR_HOURS = "4h"
     TWELVE_HOURS = "12h"
@@ -107,9 +112,9 @@ class Markets(Enum):
         except KeyError:
             raise ValueError()
 
-"""class Targets(Enum):
-    FUTURES = 'futures'
-    SPOT = 'spot'
+class MarketSide(Enum):
+    LONG = 'long'
+    SHORT = 'short'
 
     def __str__(self):
         return self.name.lower()
@@ -117,9 +122,9 @@ class Markets(Enum):
     @staticmethod
     def from_string(s):
         try:
-            return Markets[s.upper()]
+            return MarketSide[s.upper()]
         except KeyError:
-            raise ValueError()"""
+            raise ValueError()
 
 def check_best_trade(interval=Intervals.DAY):
     request_client = RequestClient(api_key=API_KEY, secret_key=SECRET_KEY)
@@ -130,7 +135,8 @@ def check_best_trade(interval=Intervals.DAY):
     exchange_info = response.json()
 
     price_precision = 0
-    best_wicks = [] 
+    best_bullish_wicks = []
+    best_bearish_wicks = []
     print('Number of pairs to check approx: ', len(exchange_info['symbols']))
     for item in exchange_info['symbols']:
         if (not item['contractType'] == 'PERPETUAL'):
@@ -149,13 +155,23 @@ def check_best_trade(interval=Intervals.DAY):
         if (cc_open < cc_close):
             diff = cc_high - cc_close
             cc_wick = round((diff / cc_close) * 100, 2)
-            best_wicks.append({ 'wick': cc_wick, 'symbol': item['symbol'] })
-        #else: # Candle is red
+            best_bullish_wicks.append({ 'wick': cc_wick, 'symbol': item['symbol'] })
+        else: # Candle is red
+            diff = cc_close - cc_low
+            cc_wick = -round((diff / cc_low) * 100, 2)
+            best_bearish_wicks.append({ 'wick': cc_wick, 'symbol': item['symbol'] })
+            
 
-    result = sorted(best_wicks, key=lambda k: k['wick'], reverse=True)
-    print(white.bold('Best wicks to trade found are:'))
-    for item in result[0:10]:
+    bullish_result = sorted(best_bullish_wicks, key=lambda k: k['wick'], reverse=True)
+    bearish_result = sorted(best_bearish_wicks, key=lambda k: k['wick'], reverse=False)
+    
+    print(white.bold('Best bullish wicks to trade found are:'))
+    for item in bullish_result[0:10]:
         print(green.bold('\t{} -> {} % wick.'.format(item['symbol'], item['wick'])))
+
+    print(white.bold('Best bearish wicks to trade found are:'))
+    for item in bearish_result[0:10]:
+        print(red.bold('\t{} -> {} % wick.'.format(item['symbol'], item['wick'])))
 
 def check_open_trade_ready():
     global INITIAL_DELAY
@@ -164,14 +180,14 @@ def check_open_trade_ready():
     if (hour_check):
         print(yellow("\nChecking candle open: {} -> {}.".format(now.strftime('%B %d %Y - %H:%M:%S'), hour_check)))
         if (not INITIAL_DELAY):
-            print('Espero 10 segundos antes de pedir la primera vez')
-            time.sleep(10)
+            print('Initial {} timeout'.format(SLEEP_TIMEOUT))
+            time.sleep(SLEEP_TIMEOUT)
             INITIAL_DELAY = True
     else:
         print(yellow("\nChecking candle open: {} -> {}. Checking again in {} seconds.".format(now.strftime('%B %d %Y - %H:%M:%S'), hour_check, SLEEP_TIMEOUT)))
     return hour_check
 
-def open_long_position_binance_futures(pair, take_profit, stop_loss, pair_change, quantity, leverage):
+def open_position_binance_futures(pair, take_profit, stop_loss, pair_change, quantity, leverage, side):
     global STOP_LOSS
     global TARGET
     global STOP_LOSS_REACHED
@@ -210,8 +226,6 @@ def open_long_position_binance_futures(pair, take_profit, stop_loss, pair_change
     price_precision = 0
     for item in exchange_info.symbols:
         if (item.symbol == pair):
-            print(dir(item))
-            print(item)
             precision = item.quantityPrecision
             price_precision = item.pricePrecision
 
@@ -227,17 +241,24 @@ def open_long_position_binance_futures(pair, take_profit, stop_loss, pair_change
 
     TARGET = take_profit
 
-    print(white.bold('\n\tOpening future position LONG at market ({}) with quantity: {} {} with take profit on: {} and stop loss: {}'.format(pair_change, quantity_with_precision, pair, take_profit, stop_loss)))
-    result = request_client.post_order(symbol=pair, side=OrderSide.BUY, quantity=quantity_with_precision, ordertype=OrderType.MARKET, positionSide="BOTH")
+    print(white.bold('\n\tOpening future position {} at market ({}) with quantity: {} {} with take profit on: {} and stop loss: {}'.format(side, pair_change, quantity_with_precision, pair, take_profit, stop_loss)))
+    order_side = OrderSide.BUY
+    if (side == MarketSide.SHORT):
+        order_side = OrderSide.SELL
+
+    result = request_client.post_order(symbol=pair, side=order_side, quantity=quantity_with_precision, ordertype=OrderType.MARKET, positionSide="BOTH")
     orderId = result.orderId
     print(green.bold('\n\t\t✓ Market order created.'))
 
     # Set take profit and stop loss orders
     try:
-        result = request_client.post_order(symbol=pair, side=OrderSide.SELL, stopPrice=stop_loss, closePosition=True, ordertype=OrderType.STOP_MARKET, positionSide="BOTH", timeInForce="GTC")
+        order_side = OrderSide.SELL
+        if (side == MarketSide.SHORT):
+            order_side = OrderSide.BUY
+        result = request_client.post_order(symbol=pair, side=order_side, stopPrice=stop_loss, closePosition=True, ordertype=OrderType.STOP_MARKET, positionSide="BOTH", timeInForce="GTC")
         STOP_LOSS_ORDER_ID = result.orderId
         print(green.bold('\n\t\t✓ Stop market order at: {} created.'.format(stop_loss)))
-        result = request_client.post_order(symbol=pair, side=OrderSide.SELL, stopPrice=take_profit, closePosition=True, ordertype=OrderType.TAKE_PROFIT_MARKET, positionSide="BOTH", timeInForce="GTC")
+        result = request_client.post_order(symbol=pair, side=order_side, stopPrice=take_profit, closePosition=True, ordertype=OrderType.TAKE_PROFIT_MARKET, positionSide="BOTH", timeInForce="GTC")
         TAKE_PROFIT_ORDER_ID = result.orderId
         print(green.bold('\n\t\t✓ Take profit market at: {} creted.'.format(take_profit)))
     except:
@@ -338,15 +359,34 @@ def check_safe_stop_loss(low, open):
         exit(1)
     return is_safe
 
+def set_sleep_timeout(interval):
+    global SLEEP_TIMEOUT
+    sleep = 15
+    low_tf_sleep = 3
+    """if (interval == Intervals.FIVETEEN_MINUTES.value):
+        sleep = low_tf_sleep
+    elif (interval == Intervals.THIRTY_MINUTES.value):
+        sleep = low_tf_sleep"""
+    if (interval == Intervals.HOUR.value):
+        sleep = low_tf_sleep
+    elif (interval == Intervals.FOUR_HOURS.value):
+        sleep = low_tf_sleep
+    elif (interval == Intervals.TWELVE_HOURS.value):
+        sleep = low_tf_sleep
+    SLEEP_TIMEOUT = sleep
+
 def minimum_downside(cc_open, cc_low):
     diff = cc_open - cc_low
     downside = (diff / cc_low) * 100
     return downside > 0.5
 
-def trade_the_open(pair, interval, quantity, leverage, market, limit, target):
+def trade_the_open(pair, interval, quantity, leverage, market, side, limit, target):
     global LAST_CANDLE_RED
+    global LAST_CANDLE_GREEN
     global LAST_LOW_PRICE
+    global LAST_HIGH_PRICE
     global TIMES_GREEN
+    global TIMES_RED
     global TARGET
     global TARGET_REACHED
     global STOP_LOSS_REACHED
@@ -389,8 +429,12 @@ def trade_the_open(pair, interval, quantity, leverage, market, limit, target):
     cc_close = float(current_candle[4])
     # Check if candlestick turned green
 
-    if (cc_high >= float(TARGET)):
-        TARGET_REACHED = True
+    if (side == MarketSide.LONG):
+        if (cc_high >= float(TARGET)):
+            TARGET_REACHED = True
+    else:
+        if (cc_low <= float(TARGET)):
+            TARGET_REACHED = True
 
     if (cc_low <= float(STOP_LOSS)):
         STOP_LOSS_REACHED = True
@@ -398,51 +442,86 @@ def trade_the_open(pair, interval, quantity, leverage, market, limit, target):
     if (TIMES_GREEN > 1 and not STOP_LOSS_REACHED):
         return False
 
-    if (cc_open < cc_close and cc_open >= cc_low):
-        if (LAST_CANDLE_RED and cc_low < LAST_LOW_PRICE):
-            print('***** INTENTO NUMERO: {} ******'.format(TIMES_GREEN))
-            TIMES_GREEN += 1
-            LAST_CANDLE_RED = False
-            LAST_LOW_PRICE = cc_low
-        else:
-            print(' x - Todavia esta verde como para volver a intentarlo, target reached?: ', TARGET_REACHED, TARGET)
-            return False
-        print(green.bold('\n\tCandle turned green.'))
-        # Check if previous candle is green or red to apply fib retracement
-        if (lc_open < lc_close):
-            # Previous candle is green
-            targets = fib_retracement(lc_close, lc_high)
-        else:
-            # Previous candle is red
-            targets = fib_retracement(lc_open, lc_high)
-        print(white.bold('\n\tTargets based on fib retracement: {}'.format(targets)))
-        #if (not minimum_downside(cc_open, cc_low)):
-            #return False
-
-        if (check_safe_stop_loss(cc_low, cc_open)):
-            if (market == Markets.FUTURES):
-                open_long_position_binance_futures(pair, targets[target], cc_low, cc_close, quantity, leverage)
+    # LONG trades
+    if (side == MarketSide.LONG):
+        if (cc_open < cc_close and cc_open >= cc_low):
+            if (LAST_CANDLE_RED and cc_low < LAST_LOW_PRICE):
+                print('***** INTENTO NUMERO: {} ******'.format(TIMES_GREEN))
+                TIMES_GREEN += 1
+                LAST_CANDLE_RED = False
+                LAST_LOW_PRICE = cc_low
             else:
-                open_position_binance_spot(pair, cc_close, cc_close, quantity, SpotSides.BUY)
-            return True
-    else:
-        if not LAST_CANDLE_RED:
-            LAST_CANDLE_RED = True
-        print(yellow.bold('\t Candle is still RED after the open. Checking again in {} seconds'.format(SLEEP_TIMEOUT)))    
-        """if (lc_open < lc_close):
-            targets = fib_retracement(lc_close, lc_high)
-            if cc_high < targets["tp1"] and cc_close < cc_open and cc_open < cc_high and check_safe_stop_loss(cc_open, cc_high):
-                print('This could be SHORTED')
-                open_short_position_binance_futures(pair, targets["tp2"], cc_low, cc_close, quantity, leverage, precision)"""
-        return False
+                print(' x - Todavia esta verde como para volver a intentarlo, target reached?: ', TARGET_REACHED, TARGET)
+                return False
+            print(green.bold('\n\tCandle turned green.'))
+            # Check if previous candle is green or red to apply fib retracement
+            if (lc_open < lc_close):
+                # Previous candle is green
+                targets = fib_retracement(lc_close, lc_high)
+            else:
+                # Previous candle is red
+                targets = fib_retracement(lc_open, lc_high)
+            print(white.bold('\n\tTargets based on fib retracement: {}'.format(targets)))
+            #if (not minimum_downside(cc_open, cc_low)):
+                #return False
 
-def main(pair, quantity, interval=Intervals.DAY, leverage=2, market=Markets.FUTURES, limit=0, target=1):
-    order_filled = False
+            if (check_safe_stop_loss(cc_low, cc_open)):
+                if (market == Markets.FUTURES):
+                    open_position_binance_futures(pair, targets[target], cc_low, cc_close, quantity, leverage, side)
+                else:
+                    open_position_binance_spot(pair, cc_close, cc_close, quantity, SpotSides.BUY)
+                return True
+        else:
+            if not LAST_CANDLE_RED:
+                LAST_CANDLE_RED = True
+            print(yellow.bold('\t Candle is still RED after the open. Checking again in {} seconds'.format(SLEEP_TIMEOUT)))    
+            return False
     
+    else: #SHORT TRADES!
+        if (cc_open > cc_close and cc_open <= cc_high):
+            print(LAST_CANDLE_GREEN, cc_high, ' < ', LAST_HIGH_PRICE)
+            if (LAST_CANDLE_GREEN and cc_high > LAST_HIGH_PRICE):
+                print('***** INTENTO NUMERO: {} ******'.format(TIMES_RED))
+                TIMES_RED += 1
+                LAST_CANDLE_GREEN = False
+                LAST_HIGH_PRICE = cc_high
+            else:
+                print(' x - Candle still red to try again. Target reached?: ', TARGET_REACHED, TARGET)
+                return False
+            print(green.bold('\n\tCandle turned red.'))
+            # Check if previous candle is red to apply fib retracement
+            if (lc_open < lc_close):
+                # Previous candle is green
+                targets = fib_retracement(lc_open, lc_low)
+            else:
+                # Previous candle is red
+                targets = fib_retracement(lc_close, lc_low)
+            print(white.bold('\n\tTargets based on fib retracement: {}'.format(targets)))
+
+            print('COMPROBANDO SAFE SL')
+            if (check_safe_stop_loss(cc_open, cc_high)):
+                if (market == Markets.FUTURES):
+                    print('ABRO SHORT')
+                    open_position_binance_futures(pair, targets[target], cc_high, cc_close, quantity, leverage, side)
+                else:
+                    open_position_binance_spot(pair, cc_close, cc_close, quantity, SpotSides.BUY)
+                return True
+        else:
+            if not LAST_CANDLE_GREEN:
+                LAST_CANDLE_GREEN = True
+            print(yellow.bold('\t Candle is still GREEN after the open. Checking again in {} seconds'.format(SLEEP_TIMEOUT)))    
+            return False
+def main(pair, quantity, interval=Intervals.DAY, leverage=2, market=Markets.FUTURES, side=MarketSide.LONG, limit=0, target=1):
+    order_filled = False
+    global TARGET 
+    set_sleep_timeout(interval)
+    if (side == MarketSide.SHORT):
+        TARGET = 0
+
     print(white.bold('* Liquidity trading of: {} with {} as amount at {} candle with x{} leverage and at {} market starting at {} and finishing at {}.'.format(pair, quantity, interval, leverage, market, START_INTERVAL, END_INTERVAL)))
     while not TARGET_REACHED and (not order_filled or TIMES_GREEN < MAX_ORDER_RETRIES):
         if (check_open_trade_ready()):
-            order_filled = trade_the_open(pair, interval, quantity, leverage, market, limit, target)
+            order_filled = trade_the_open(pair, interval, quantity, leverage, market, side, limit, target)
         if (not order_filled):
             time.sleep(SLEEP_TIMEOUT)
 
@@ -453,6 +532,7 @@ if __name__ == "__main__":
     parser.add_argument('--interval', type=Intervals.from_string, choices=list(Intervals), help='Candle timeframe to trade.')
     parser.add_argument('--leverage', type=int, help='Leverage to apply on the trade.')
     parser.add_argument('--market', type=Markets.from_string, help='Market where the will be executed.', default=Markets.FUTURES)
+    parser.add_argument('--side', type=MarketSide.from_string, help='Type of order to be executed.', default=MarketSide.LONG)
     parser.add_argument('--limit', type=float, help='Limit for spot orders.')
     parser.add_argument('--start', type=int, help='Candle UTC start.', default=0)
     parser.add_argument('--end', type=int, help='Candle UTC end.', default=8)
@@ -473,6 +553,6 @@ if __name__ == "__main__":
     END_INTERVAL = args.end
 
     MAX_STOP_LOSS_RISK = args.risk
-    main(args.pair, args.quantity, args.interval.value, args.leverage, args.market, args.limit, args.target)
+    main(args.pair, args.quantity, args.interval.value, args.leverage, args.market, args.side, args.limit, args.target)
 
     print(green.bold('\nOrders successfully set.'))
