@@ -1,2 +1,2 @@
 simple_chalk
-dotenv
+python-dotenv
