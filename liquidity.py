@@ -197,6 +197,17 @@ def clear_stale_orders(pair):
     result = request_client.cancel_all_orders(symbol=pair)
     print(yellow.bold('\n\t All {} orders have been cancelled.'.format(pair)))
 
+def clear_take_profit_orders(pair):
+    global TAKE_PROFIT_IDS
+    request_client = RequestClient(api_key=API_KEY, secret_key=SECRET_KEY)
+    for id in TAKE_PROFIT_IDS:
+        try:
+            result = request_client.cancel_order(symbol=pair, orderId=id)
+            print(yellow.bold('Take profit order id removed: {}'.format(result.orderId)))
+        except Exception as e:
+            print(white.bold('Limpiando ordenes take profit errorr!: ', e))
+    TAKE_PROFIT_IDS = []
+    print(yellow.bold('\n\t All {} take profit order ids have been cancelled.'.format(pair)))
 
 def open_position_binance_futures(pair, targets, target, stop_loss, pair_change, quantity, leverage, side):
     global STOP_LOSS
@@ -232,6 +243,7 @@ def open_position_binance_futures(pair, targets, target, stop_loss, pair_change,
     # Create order
     quantity_rounded = float(quantity * leverage) / float(pair_change)
     quantity_with_precision = "{:0.0{}f}".format(quantity_rounded, precision)
+    print(f'{float(quantity * leverage)} / {float(pair_change)} = {float(quantity * leverage) / float(pair_change)} --> {quantity_with_precision}')
     whole_quantity_with_precision = quantity_with_precision
 
     stop_loss = "{:0.0{}f}".format(stop_loss, price_precision)
@@ -300,10 +312,10 @@ def open_position_binance_futures(pair, targets, target, stop_loss, pair_change,
         # Cancel order if something did not work as expected
         print(red.bold('\n\t\t x Stop loss failed ({}). Cancelling order at market price.'.format(e)))
         clear_stale_orders(pair)
-        print('VENDO {} PARA {}'.format(quantity_with_precision, order_side))
-        print('+++++VENDO MANUALMENTEEE:', pair, order_side, whole_quantity_with_precision)
-        result = request_client.post_order(symbol=pair, side=order_side, quantity=whole_quantity_with_precision, ordertype=OrderType.MARKET, positionSide="BOTH")
-        print('Manual market stop loss result: ', result, dir(result))
+        #print('VENDO {} PARA {}'.format(quantity_with_precision, order_side))
+        #print('+++++VENDO MANUALMENTEEE:', pair, order_side, whole_quantity_with_precision)
+        #result = request_client.post_order(symbol=pair, side=order_side, quantity=whole_quantity_with_precision, ordertype=OrderType.MARKET, positionSide="BOTH")
+        #print('Manual market stop loss result: ', result, dir(result))
         return False
 
 def open_position_binance_spot(pair, limit, pair_change, quantity, side = SpotSides.BUY):
@@ -456,6 +468,7 @@ def trade_the_open(pair, interval, quantity, leverage, market, side, limit, targ
     global TARGET_REACHED
     global STOP_LOSS_REACHED
     global STOP_LOSS
+    global STOP_LOSS_ORDER_ID
     global CAN_CLEAR_STALE_ORDERS
     try:
         candles = get_last_binance_candles(pair, interval, market)
@@ -495,16 +508,26 @@ def trade_the_open(pair, interval, quantity, leverage, market, side, limit, targ
     # Check if candlestick turned green
     if (side == MarketSide.LONG):
         if (cc_high >= float(TARGET)):
+            print('--- ESTAMOS EN LONG Y TARGET HA LLEGADO')
             TARGET_REACHED = True
     else:
         if (cc_low <= float(TARGET)):
+            print('--- ESTAMOS EN SHORT Y TARGET HA LLEGADO')
             TARGET_REACHED = True
 
     if (cc_low <= float(STOP_LOSS)):
-        STOP_LOSS_REACHED = True
-        if (CAN_CLEAR_STALE_ORDERS):
-            clear_stale_orders(pair)
-            CAN_CLEAR_STALE_ORDERS = False
+        if (not STOP_LOSS_REACHED):
+            request_client = RequestClient(api_key=API_KEY, secret_key=SECRET_KEY)
+            result = request_client.get_order(symbol=pair, orderId=STOP_LOSS_ORDER_ID)
+            print('_______________STOP LOSS ORDER!! _______________')
+            print(result)
+            print(dir(result))
+            print('_________________________________________________')
+            STOP_LOSS_REACHED = True
+            STOP_LOSS_ORDER_ID = None
+            if (CAN_CLEAR_STALE_ORDERS):
+                clear_take_profit_orders(pair)
+                CAN_CLEAR_STALE_ORDERS = False
 
     if (TIMES_GREEN > 1 and not STOP_LOSS_REACHED):
         return False
