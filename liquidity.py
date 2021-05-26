@@ -193,7 +193,9 @@ def move_stop_loss(pair, quantity_to_extract, new_stop):
     except Exception as e:
         print(red.bold(f'No se pudo eliminar el stop loss: {e}'))
 
-    remaining_quantity_with_precision = "{:0.0{}f}".format(float(quantity) - float(quantity_to_extract), PRECISION)
+    print(f'quantity: {quantity} - quantity to extract: {quantity_to_extract}')
+    remaining_quantity = float(quantity) - float(quantity_to_extract)
+    remaining_quantity_with_precision = "{:0.0{}f}".format(remaining_quantity, PRECISION)
     print(white.bold(f'MOVING STOP LOSSES HERE: {remaining_quantity_with_precision} - {new_stop}'))
     try:
         result = request_client.post_order(symbol=pair, side=side, stopPrice=new_stop, ordertype=OrderType.STOP, quantity=remaining_quantity_with_precision, price=new_stop, positionSide="BOTH")
@@ -234,6 +236,7 @@ def check_stop_loss_reached(pair, side, cc_low, cc_high):
     global STOP_LOSS
     global STOP_LOSS
     global CAN_CLEAR_STALE_ORDERS
+    print(white.bold('---- CHECKING stop loss REACHED -----------------'))
     if (side == MarketSide.LONG):
         # Check if previous SL has been reached
         if (cc_low < float(STOP_LOSS)):
@@ -285,10 +288,11 @@ def check_open_trade_ready():
     print(f'{now.hour} >= {START_INTERVAL} and {now.hour} <= {END_INTERVAL}')
     if (hour_check):
         print(yellow("\nChecking candle open: {} -> {}.".format(now.strftime('%B %d %Y - %H:%M:%S'), hour_check)))
-        if (not INITIAL_DELAY):
-            print('Initial {} timeout'.format(SLEEP_TIMEOUT))
-            time.sleep(SLEEP_TIMEOUT)
-            INITIAL_DELAY = True
+        time.sleep(SLEEP_TIMEOUT)
+        #if (not INITIAL_DELAY):
+            #print('Initial {} timeout'.format(SLEEP_TIMEOUT))
+            #time.sleep(SLEEP_TIMEOUT)
+            #INITIAL_DELAY = True
     else:
         print(yellow("\nChecking candle open: {} -> {}. Checking again in {} seconds.".format(now.strftime('%B %d %Y - %H:%M:%S'), hour_check, SLEEP_TIMEOUT)))
         time.sleep(SLEEP_TIMEOUT)
@@ -558,8 +562,8 @@ def init(interval):
         END_INTERVAL = 16
     ## TODO: debug start
     START_INTERVAL = 11
-    END_INTERVAL = 17
-    ## TODO: DEBUG END
+    END_INTERVAL = 20
+    # TODO: DEBUG END
     
 
 def trade_the_open(pair, interval, quantity, leverage, market, side, limit, target):
