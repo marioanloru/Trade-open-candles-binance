@@ -1,0 +1,8 @@
+- hablar con BotFather
+- /start
+- /newbot
+- Dale nombre al bot
+- Copia el token generado en telequisquillabot -> updater = Updater("TOKEN")
+- lanza el bot. 
+Errores:
+Si quisquilla esta en modo espera para poner las ordenes el bot no va a responder. Esta apagado o fuera de cobertura. Asi que ten cuidadin al lanzar la orden juajuajua

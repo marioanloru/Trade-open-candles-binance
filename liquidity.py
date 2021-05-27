@@ -67,6 +67,9 @@ NEXT_STOP_LOSS = 0
 POSITION_ORDER_ID = None
 PRECISION = 0
 
+STOP_LOSS_IDS = []
+TAKE_PROFIT_IDS = []
+
 class Intervals(Enum):
     FIVETEEN_MINUTES = "15m"
     THIRTY_MINUTES = "30m"
@@ -190,18 +193,29 @@ def check_best_trade(interval=Intervals.DAY):
     bearish_result = sorted(best_bearish_wicks, key=lambda k: k['wick'], reverse=False)
     
     print(white.bold(f'Best options to trade the daily of {interval}'))
+    result = f'Best options to trade the daily of {interval}'
     if btc_green:
         print(green.bold(f'\tBTC bullish wick: {btc_wick}%'))
+        result = f'{result} \n\tBTC bullish wick: {btc_wick}%'
     else:
         print(red.bold(f'\tBTC bearish wick: {btc_wick}%'))
+        result = f'{result} \n\tBTC bullish wick: {btc_wick}%'
 
+
+    result = f'{result} \nBest bullish wicks to trade found are:\n'
     print(white.bold('Best bullish wicks to trade found are:'))
     for item in bullish_result[0:10]:
+        result = result + '\n\t\t{} -> {} % wick.'.format(item['symbol'], item['wick'])
         print(green.bold('\t{} -> {} % wick.'.format(item['symbol'], item['wick'])))
 
     print(white.bold('Best bearish wicks to trade found are:'))
+    result = result + '\n\nBest bearish wicks to trade found are:\n'
     for item in bearish_result[0:10]:
+        result = result + '\n\t\t{} -> {} % wick.'.format(item['symbol'], item['wick'])
         print(red.bold('\t{} -> {} % wick.'.format(item['symbol'], item['wick'])))
+    
+    return result
+
 
 def move_stop_loss(pair, quantity_to_extract, new_stop):
     global STOP_LOSS_ORDER
@@ -309,9 +323,113 @@ def check_stop_loss_reached(pair, side, cc_low, cc_high):
                         clear_take_profit_orders(pair)
                         CAN_CLEAR_STALE_ORDERS = False
 
+def move_stop_loss(pair, quantity_to_extract, new_stop):
+    global STOP_LOSS_ORDER
+    global PRECISION
+    print(white.bold('******* moving stop los *******'))
+    request_client = RequestClient(api_key=API_KEY, secret_key=SECRET_KEY)
+    quantity = STOP_LOSS_ORDER["quantity"]
+    order_id = STOP_LOSS_ORDER["orderId"]
+    side = STOP_LOSS_ORDER["side"]
+
+    try:
+        print('ELIMINO STOP LOSS!!!')
+        result = request_client.cancel_order(symbol=pair, orderId=order_id)
+    except Exception as e:
+        print(red.bold(f'No se pudo eliminar el stop loss: {e}'))
+
+    print(f'quantity: {quantity} - quantity to extract: {quantity_to_extract}')
+    remaining_quantity = float(quantity) - float(quantity_to_extract)
+    remaining_quantity_with_precision = "{:0.0{}f}".format(remaining_quantity, PRECISION)
+    print(white.bold(f'MOVING STOP LOSSES HERE: {remaining_quantity_with_precision} - {new_stop}'))
+    try:
+        result = request_client.post_order(symbol=pair, side=side, stopPrice=new_stop, ordertype=OrderType.STOP, quantity=remaining_quantity_with_precision, price=new_stop, positionSide="BOTH")
+    except Exception as e:
+        print(red.bold(f'NEW STOP LOSS FAILED!! {e}'))
+
+
+def check_take_profits_reached(pair, cc_open):
+    global TAKE_PROFIT_ORDERS
+    print(white.bold('---- CHECKING TAKE PROFITS REACHED -----------------'))
+    request_client = RequestClient(api_key=API_KEY, secret_key=SECRET_KEY)
+    new_take_profits = []
+    for index in range(len(TAKE_PROFIT_ORDERS)):
+        quantity = TAKE_PROFIT_ORDERS[index]["quantity"]
+        print(f'Current TP: {TAKE_PROFIT_ORDERS[index]}')
+        try:
+            result = request_client.get_order(symbol=pair, orderId=STOP_LOSS_ORDER["orderId"])
+            print(result)
+            print(result.status)
+            if (result.status == 'FILLED' or result.status == 'CANCELED' or result.status == 'REJECTED' or result.status == 'EXPIRED'):
+                new_stop = 0
+                if (index == 0):
+                    new_stop = cc_open
+                else:
+                    new_stop = TAKE_PROFIT_ORDERS[index - 1]["take_profit"]
+                move_stop_loss(pair, quantity, new_stop)
+            else:
+                print(white.bold('PROFITS NO ALCANZADOS!'))
+                new_take_profits = TAKE_PROFIT_ORDERS[index::]
+                break
+        except:
+            move_stop_loss(pair, quantity, new_stop)
+    TAKE_PROFIT_ORDERS = new_take_profits
+
+
+def check_stop_loss_reached(pair, side, cc_low, cc_high):
+    global STOP_LOSS_REACHED
+    global STOP_LOSS
+    global STOP_LOSS
+    global CAN_CLEAR_STALE_ORDERS
+    print(white.bold('---- CHECKING stop loss REACHED -----------------'))
+    if (side == MarketSide.LONG):
+        # Check if previous SL has been reached
+        if (cc_low < float(STOP_LOSS)):
+            print(f'Low {cc_low} < STOPLOSS {STOP_LOSS} STOP LOSS REACHED -> {STOP_LOSS_REACHED} ')
+            if (not STOP_LOSS_REACHED):
+                request_client = RequestClient(api_key=API_KEY, secret_key=SECRET_KEY)
+                try:
+                    result = request_client.get_order(symbol=pair, orderId=STOP_LOSS)
+                    if (result.status == 'FILLED' or result.status == 'CANCELED' or result.status == 'REJECTED' or result.status == 'EXPIRED'):
+                        STOP_LOSS_REACHED = True
+                        STOP_LOSS_ORDER = None
+                        STOP_LOSS = 0
+                        if (CAN_CLEAR_STALE_ORDERS):
+                            clear_take_profit_orders(pair)
+                            CAN_CLEAR_STALE_ORDERS = False
+                except Exception as e:
+                    STOP_LOSS_REACHED = True
+                    STOP_LOSS_ORDER = None
+                    STOP_LOSS = 0
+
+                    if (CAN_CLEAR_STALE_ORDERS):
+                        clear_take_profit_orders(pair)
+                        CAN_CLEAR_STALE_ORDERS = False
+    else:
+        if (cc_high > float(STOP_LOSS)):
+            if (not STOP_LOSS_REACHED):
+                request_client = RequestClient(api_key=API_KEY, secret_key=SECRET_KEY)
+                try:
+                    result = request_client.get_order(symbol=pair, orderId=STOP_LOSS)
+                    if (result.status == 'FILLED' or result.status == 'CANCELED' or result.status == 'REJECTED' or result.status == 'EXPIRED'):
+                        STOP_LOSS_REACHED = True
+                        STOP_LOSS_ORDER = None
+                        STOP_LOSS = 0
+                        if (CAN_CLEAR_STALE_ORDERS):
+                            clear_take_profit_orders(pair)
+                            CAN_CLEAR_STALE_ORDERS = False
+                except Exception as e:
+                    STOP_LOSS_REACHED = True
+                    STOP_LOSS_ORDER = None
+                    STOP_LOSS = 0
+                    if (CAN_CLEAR_STALE_ORDERS):
+                        clear_take_profit_orders(pair)
+                        CAN_CLEAR_STALE_ORDERS = False
+
 def check_open_trade_ready():
     now = datetime.utcnow()
     hour_check = now.hour >= START_INTERVAL and now.hour <= END_INTERVAL
+    print(f'{now.hour} >= {START_INTERVAL} and {now.hour} <= {END_INTERVAL}')
     if (hour_check):
         print(yellow("\nChecking candle open: {} -> {}.".format(now.strftime('%B %d %Y - %H:%M:%S'), hour_check)))
         time.sleep(SLEEP_TIMEOUT)
@@ -378,6 +496,7 @@ def open_position_binance_futures(pair, targets, target, stop_loss, pair_change,
     for item in exchange_info.symbols:
         if (item.symbol == pair):
             precision = item.quantityPrecision
+            PRECISION = precision
             price_precision = item.pricePrecision
             tick_size = item.filters[0]["tickSize"]
             tick_size = str(tick_size).split('.')[1].find("1") + 1
@@ -596,7 +715,6 @@ def init(interval):
         START_INTERVAL = 0
         END_INTERVAL = 16
 
-
 def trade_the_open(pair, interval, quantity, leverage, market, side, limit, target):
     global LAST_CANDLE_RED
     global LAST_CANDLE_GREEN
@@ -773,6 +891,11 @@ def main(pair, quantity, interval=Intervals.DAY, leverage=2, market=Markets.FUTU
             trade_the_open(pair, interval, quantity, leverage, market, side, limit, target)
     # Close stale orders when target has been reached
     check_trade_finished(pair, side, interval, market)
+
+    # Close stale orders when targ has been reached
+    if TARGET_REACHED:
+        clear_stale_orders(pair)
+    return f'*Liquidity trading of: {pair} with {quantity} as amount at {interval} candle with x{leverage} leverage and at {market} market starting at {START_INTERVAL} and finishing at {END_INTERVAL}.'
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Trade the open of candles in different timeframes.')
