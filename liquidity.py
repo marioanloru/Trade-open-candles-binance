@@ -164,14 +164,20 @@ def check_best_trade(interval=Intervals.DAY):
 
     bullish_result = sorted(best_bullish_wicks, key=lambda k: k['wick'], reverse=True)
     bearish_result = sorted(best_bearish_wicks, key=lambda k: k['wick'], reverse=False)
-    
+    result = 'Best bullish wicks to trade found are:\n'
     print(white.bold('Best bullish wicks to trade found are:'))
     for item in bullish_result[0:10]:
+        result = result + '\n\t\t{} -> {} % wick.'.format(item['symbol'], item['wick'])
         print(green.bold('\t{} -> {} % wick.'.format(item['symbol'], item['wick'])))
 
     print(white.bold('Best bearish wicks to trade found are:'))
+    result = result + '\n\nBest bearish wicks to trade found are:\n'
     for item in bearish_result[0:10]:
+        result = result + '\n\t\t{} -> {} % wick.'.format(item['symbol'], item['wick'])
         print(red.bold('\t{} -> {} % wick.'.format(item['symbol'], item['wick'])))
+    
+    return result
+
 
 def check_open_trade_ready():
     global INITIAL_DELAY
@@ -524,6 +530,7 @@ def main(pair, quantity, interval=Intervals.DAY, leverage=2, market=Markets.FUTU
             order_filled = trade_the_open(pair, interval, quantity, leverage, market, side, limit, target)
         if (not order_filled):
             time.sleep(SLEEP_TIMEOUT)
+    return '*Liquidity trading of: {} with {} as amount at {} candle with x{} leverage and at {} market starting at {} and finishing at {}.'.format(pair, quantity, interval, leverage, market, START_INTERVAL, END_INTERVAL)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Trade the open of candles in different timeframes.')
