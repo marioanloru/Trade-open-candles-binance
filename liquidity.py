@@ -471,14 +471,11 @@ def open_position_binance_futures(pair, targets, target, stop_loss, pair_change,
         return True
     except Exception as e:
         # Cancel order if something did not work as expected
-        remaining_quantity_with_precision = "{:0.0{}f}".format(remaining_quantity, precision)
-        print(red.bold('\n\t\t x Stop loss failed ({}). Cancelling order at market price : {}.'.format(e, remaining_quantity_with_precision)))
-        STOP_LOSS_ORDER = {"order_id": None, "quantity": remaining_quantity_with_precision, "stop_loss": stop_loss, "side": order_side}
+        print(red.bold('\n\t\t x Stop loss failed ({}). Cancelling order at market price, quantity: {}.'.format(e, quantity_with_precision)))
+        STOP_LOSS_ORDER = {"order_id": None, "quantity": quantity_with_precision, "stop_loss": stop_loss, "side": order_side}
         
         clear_stale_orders(pair)
-        # Change this check for the minimun notional quantity
-        if (remaining_quantity > 5):
-            result = request_client.post_order(symbol=pair, side=order_side, quantity=remaining_quantity_with_precision, ordertype=OrderType.MARKET, positionSide="BOTH")
+        result = request_client.post_order(symbol=pair, side=order_side, quantity=quantity_with_precision, ordertype=OrderType.MARKET, positionSide="BOTH")
         return False
 
 def open_position_binance_spot(pair, limit, pair_change, quantity, side = SpotSides.BUY):
